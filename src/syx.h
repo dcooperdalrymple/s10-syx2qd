@@ -10,6 +10,7 @@
 #define SAMPLE_BANKS (4)
 #define SAMPLING_STRUCTURE_MAX (10)
 #define TONE_NAME_LENGTH (10)
+#define SAMPLING_STRUCTURE_LUT_LENGTH (8)
 
 #define SAMPLE_RATE_30K (30000)
 #define SAMPLE_RATE_15K (15000)
@@ -57,6 +58,7 @@ typedef struct SamplingStructures {
 } SamplingStructure;
 
 typedef struct Samples {
+    SamplingStructure GlobalSamplingStructure;
     char ToneName[SAMPLE_BANKS][TONE_NAME_LENGTH];
     SamplingStructure SamplingStructure[SAMPLE_BANKS];
     uint8_t LoopMode[SAMPLE_BANKS];
@@ -72,8 +74,8 @@ typedef struct Samples {
 } Sample;
 
 Sample *init_sample(void);
-SamplingStructure get_sampling_structure(uint8_t i);
-SyxData *read_syx(char *filepath);
-Sample *convert_syx_to_sample(SyxData *syx, char verbose);
+SamplingStructure get_sampling_structure(uint8_t);
+SyxData *read_syx(char *);
+Sample *convert_syx_to_sample(SyxData *, char);
 
 #endif

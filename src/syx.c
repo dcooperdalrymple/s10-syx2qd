@@ -17,6 +17,8 @@ SamplingStructure get_sampling_structure(uint8_t i) {
 Sample *init_sample(void) {
     Sample *sample = malloc(sizeof(*sample));
 
+    sample->GlobalSamplingStructure = NULL;
+
     uint8_t i, j;
     for (i = 0; i < SAMPLE_BANKS; i++) {
         for (j = 0; j < TONE_NAME_LENGTH-1; j++) {
@@ -287,6 +289,9 @@ Sample *convert_syx_to_sample(SyxData *syx, char verbose) {
                     // Sampling Structure
                     if (syxCounter == 7+wpOffs+0x09 && syx->buffer[x] <= SAMPLING_STRUCTURE_MAX) {
                         sample->SamplingStructure[wpBlock] = get_sampling_structure(syx->buffer[x]);
+
+                        if (!sample->GlobalSamplingStructure) sample->GlobalSamplingStructure = sample->SamplingStructure[wpBlock];
+
 						if (verbose) {
 							printf("Sampling structure: %d - %s\n", sample->SamplingStructure[wpBlock].Index, SamplingStructureLUT[sample->SamplingStructure[wpBlock].Index]);
 						}
