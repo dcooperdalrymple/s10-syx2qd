@@ -83,7 +83,7 @@ Sample *convert_syx_to_sample(SyxData *syx, char verbose) {
 
     uint8_t sampleToggle;
     uint32_t samplePosition;
-    int sampleData;
+    uint16_t sampleData;
 
     uint8_t syxByte;
 	uint32_t syxCounter = 0;
@@ -407,8 +407,8 @@ Sample *convert_syx_to_sample(SyxData *syx, char verbose) {
                             break;
                         }
 
-                        // Convert 12-bit to 16-bit?
-                        sampleData = ((syx->buffer[x-1] & 0x7f) << 9) + ((syx->buffer[x] & 0x7c) << 2);
+                        sampleData = (syx->buffer[x-1] & 0x7f) << 7) + (syx->buffer[x] & 0x7c); // 12-bit
+                        //sampleData = ((syx->buffer[x-1] & 0x7f) << 9) + ((syx->buffer[x] & 0x7c) << 2); // 16-bit
                         sample->Memory[samplePosition] = 0xff & sampleData;
 						sample->Memory[samplePosition+1] = 0xff & (sampleData >> 8);
 
