@@ -55,6 +55,8 @@ class Utilities:
                 data = LUT.invert(data)
             elif mode[i] == "qd-generate":
                 data = QD.generate(verbose)
+            elif mode[i] == "crc-check":
+                data = CRC.check(data, verbose) # CRC value (uint16_t)
 
         return data
 
@@ -296,10 +298,103 @@ class LUT:
             data = LUT.table[data%LUT.TABLE_SIZE]
         return data
 
+class CRC16:
+    def __init__(self, value=0):
+        self.set(value)
+
+    def set(self, value):
+        self.high = (value >> 8) & 0xff
+        self.low = value & 0xff
+
+    def get(self):
+        return ((self.high & 0xff) << 8) | (self.low & 0xff)
+
+    def print(self, invert=False):
+        if not invert:
+            print("0x{:02x}{:02x}".format(self.high, self.low))
+        else:
+            print("0x{:02x}{:02x}".format(LUT.invert(self.high), LUT.invert(self.low)))
+
 class CRC:
 
-    def do():
-        print("Need to implement")
+    BITS = 4
+    POLYNOME = 0x8005
+    INITVALUE = 0x0000
+    INVERT = True # NOTE: Should this be a variable or added into the mode?
+
+    def check(data, verbose=0):
+        if verbose>1:
+            print("CRC Input Data:")
+            Utilities.printhex(data)
+
+        crc, table = CRC.calculate(CRC.POLYNOME, CRC.INITVALUE)
+        if verbose>1:
+            print("CRC Table:")
+            Utilities.printhex(table)
+            print("Initial CRC: ", end="")
+            crc.print(True)
+
+        for i in range(len(data)):
+            value = data[i]
+            if CRC.INVERT:
+                value = LUT.invert(value)
+            crc = CRC.update(crc, value, table, verbose)
+
+        if verbose>0:
+            if verbose>1:
+                print("CRC Check Complete")
+                print("Final CRC: ", end="")
+                crc.print(True)
+            if crc.get()>0:
+                print("CRC Check Failed")
+            else:
+                print("CRC Check Successful!")
+
+        return crc.get() # >0 = bad crc
+
+    def calculate(polynome, initvalue, verbose=0):
+        count = 1<<CRC.BITS
+        table = [0 for i in range(count*2)]
+        for i in range(0, count):
+            value = CRC.generate(i, polynome, verbose)
+            table[i+count] = (value >> 8) & 0xff
+            table[i] = value & 0xff
+        return CRC16(initvalue), table
+
+    def generate(index, polynome, verbose=0):
+        # Prepare initial register so that index is at MSB
+        value = index
+        value = (value << (16 - CRC.BITS)) & 0xffff
+
+        for i in range(CRC.BITS):
+            if value & 0x8000:
+                value = ((value << 1) ^ polynome) & 0xffff
+            else:
+                value = (value << 1) & 0xffff
+
+        return value
+
+    def update(crc, value, table, verbose=0):
+        crc = CRC.update_nibble(crc, (value>>4) & 0x0f, table, verbose)
+        crc = CRC.update_nibble(crc, value & 0x0f, table, verbose)
+        return crc
+
+    def update_nibble(crc, value, table, verbose=0):
+        # Step one, extract the Most significant 4 bits of the CRC register
+        t = (crc.high>>4) & 0x0f
+
+        # XOR in the data into the extracted bits
+        t = t ^ (value & 0x0f)
+
+        # Shift the CRC register left 4 bits
+        crc.high = ((crc.high<<4)&0xf0) | ((crc.low>>4)&0x0f)
+        crc.low = (crc.low<<4)&0xf0
+
+        # Do the table lookups and XOR the result into the CRC tables
+        crc.high = crc.high ^ table[t+16]
+        crc.low = crc.low ^ table[t]
+
+        return crc
 
 class QD:
 
@@ -390,7 +485,7 @@ parser.add_argument('--verbose', '-v', type=int)
 parser.add_argument('--input', '-i', type=argparse.FileType('rb'))
 parser.add_argument('--output', '-o', type=argparse.FileType('wb', 0))
 parser.add_argument('--hex', '-s', type=str)
-parser.add_argument('--mode', '-m', type=str, choices=['encode', 'decode', 'mfm-decode', 'mfm-encode', 'mfm-sync', 'lut-invert', 'qd-generate'], required=True, nargs="+", help="multiple processes can be combined and processed in order")
+parser.add_argument('--mode', '-m', type=str, choices=['encode', 'decode', 'mfm-decode', 'mfm-encode', 'mfm-sync', 'lut-invert', 'qd-generate', 'crc-check'], required=True, nargs="+", help="multiple processes can be combined and processed in order")
 parser.add_argument('--block', '-b', type=int, default=1)
 parser.set_defaults(verbose=0, hex='', type='encode')
 
