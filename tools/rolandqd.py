@@ -14,6 +14,7 @@ try:
     import argparse
     from os import path
     import struct
+    import string
 except ImportError as err:
     print("Could not load {} module.".format(err))
     raise SystemExit
@@ -57,6 +58,8 @@ class Utilities:
                 data = QD.generate(verbose)
             elif mode[i] == "crc-check":
                 data = CRC.check(data, verbose) # CRC value (uint16_t)
+            elif mode[i] == "syx-read":
+                data = Sysex.read(data, verbose) # class Sample
 
         return data
 
@@ -83,6 +86,19 @@ class Utilities:
             data[bit_offset>>3] = data[bit_offset>>3] | (0x80 >> (bit_offset&0x07))
         else:
             data[bit_offset>>3] = data[bit_offset>>3] & ~(0x80 >> (bit_offset&0x07))
+
+    def isalpha(c):
+        chars = string.ascii_lowercase + string.ascii_uppercase
+        return c in chars
+
+    def isdigit(c):
+        return c in string.digits
+
+    def isfilesafe(c):
+        if type(c) is int:
+            c = chr(c)
+        chars = string.ascii_lowercase + string.ascii_uppercase + string.digits + '.!()+-_'
+        return c in chars
 
 class MFM:
 
@@ -478,6 +494,399 @@ class QD:
 
         return qd
 
+    def buildSampleBankBlocks(sample):
+        print()
+        # TODO: Convert sample banks to QD blocks. Use 2-dimensional array as [bank=[blocks]]?
+
+class SamplingStructure:
+    def __init__(self, index=0, name="A", offset=0, length=1, loops=1):
+        self.index = index
+        self.name = name
+        self.offset = offset
+        self.length = length
+        self.loops = loops
+
+class SampleBank:
+
+    SAMPLE_RATE_30K = 30000
+    SAMPLE_RATE_15K = 15000
+    DEFAULT_SAMPLE_RATE = 30000 # SAMPLE_RATE_30K
+
+    def __init__(self):
+        self.LoopMode = 0
+        self.ScanMode = 0
+        self.RecKey = 0
+        self.StartAddress = 0
+        self.ManualLoopLength = 0
+        self.ManualEndAddress = 0
+        self.AutoLoopLength = 0
+        self.AutoEndAddress = 0
+        self.SampleRate = self.DEFAULT_SAMPLE_RATE
+
+class Sample:
+
+    S10_MEMORY_MAX = 256*1024
+    SAMPLE_BANKS = 4
+    TONE_NAME_LENGTH = 10
+
+    def __init__(self):
+        self.SamplingStructure = SamplingStructure()
+        self.ToneName = " " * self.TONE_NAME_LENGTH
+        self.Banks = [SampleBank for i in range(self.SAMPLE_BANKS)]
+        self.Memory = [0 for i in range(self.S10_MEMORY_MAX)]
+        # TODO: Dynamically set Banks with def setSamplingStructure? class SampleBank would have self.Sample for "A", etc
+
+    def setToneNameChr(self, i, c):
+        if i>len(self.ToneName):
+            return False
+        if type(c) is int:
+            c = chr(c)
+        self.ToneName = self.ToneName[:i] + c + self.ToneName[(i+1):]
+        return True
+
+class Sysex:
+
+    SamplingStructures = [
+        SamplingStructure(0, "A", 0, 1, 1),
+        SamplingStructure(1, "B", 1, 1, 1),
+        SamplingStructure(2, "C", 2, 1, 1),
+        SamplingStructure(3, "D", 3, 1, 1),
+        SamplingStructure(4, "AB", 0, 2, 1),
+        SamplingStructure(5, "CD", 2, 2, 1),
+        SamplingStructure(6, "ABCD", 0, 4, 1),
+        SamplingStructure(7, "A-B", 0, 1, 2),
+        SamplingStructure(8, "C-D", 2, 1, 2),
+        SamplingStructure(9, "AB-CD", 0, 2, 2),
+        SamplingStructure(10, "A-B-C-D", 0, 1, 4)
+    ]
+
+    def read(data, verbose=0):
+
+        sample = Sample()
+
+        sampleToggle = 0
+        samplePosition = 0
+        sampleData = 0
+
+        syxByte = 0
+        syxCounter = 0
+        address = 0
+        syxActive = False
+
+        syxCommand = 0
+        syxParam = 0
+
+        wpOffs = 0 # Wave Parameter Offset
+        wpBlock = 0 # Wave Parameter Block
+
+        for x in range(len(data)):
+            syxByte = data[x]
+
+            # Sysex Start
+            if syxByte == 0xf0:
+                if verbose>1:
+                    print("\nSystem Exclusive start.")
+                syxCounter = 0
+                syxActive = True
+                continue
+
+            # Sysex Stop
+            if syxByte == 0xf7:
+                if verbose>1:
+                    print("System Exclusive stop. SysexCounter (minus header and stop) at: {}".format(syxCounter-8))
+                syxActive = False
+                continue
+
+            if syxActive:
+
+                # Manufacturer ID
+                if syxCounter == 0:
+                    if syxByte != 0x41:
+                        if verbose>1:
+                            print("Wrong manufacturer ID: 0x{:02x}.".format(syxByte))
+                        syxActive = False
+                    else:
+                        if verbose>1:
+                            print("Roland ID found.")
+                    syxCounter += 1
+                    continue
+
+                # MIDI Channel
+                if syxCounter == 1:
+                    if syxByte > 0x0f:
+                        if verbose>1:
+                            print("Wrong MIDI basic channel.")
+                        else:
+                            print("MIDI basic channel: {}", syxByte+1)
+                    syxCounter += 1
+                    continue
+
+                # Model ID
+                if syxCounter == 2:
+                    if syxByte != 0x10:
+                        if verbose>1:
+                            print("Wrong Model-ID.")
+                        syxActive = False
+                    else:
+                        if verbose>1:
+                            print("S-10 found.")
+                    syxCounter += 1
+                    continue
+
+                # Command ID
+                if syxCounter == 3:
+                    syxCommand = syxByte
+                    if verbose>1:
+                        if syxCommand == 0x11: # RQ1
+                            print("Command-ID: Request (one way).")
+                        elif syxCommand == 0x12: # DT1
+                            print("Command-ID: Data set (One way).")
+                        elif syxCommand == 0x40: # WSD
+                            print("Command-ID: Want to send data.")
+                        elif syxCommand == 0x41: # RQD
+                            print("Command-ID: Request data.")
+                        elif syxCommand == 0x42: # DAT
+                            print("Command-ID: Data set.")
+                        elif syxCommand == 0x43: # ACK
+                            print("Command-ID: Acknowledge.")
+                        elif syxCommand == 0x45: # EOD
+                            print("Command-ID: End of data.")
+                        elif syxCommand == 0x4e: # ERR
+                            print("Command-ID: Communication error.")
+                        elif syxCommand == 0x4f: # RJC
+                            print("Command-ID: Rejection.")
+                    syxCounter += 1
+                    continue
+
+                # Address (only DT1)
+                if syxCounter == 4 and syxCommand == 0x12:
+                    if verbose>1:
+                        print("Address: 0x{:02x}{:02x}{:02x}".format(data[x], data[x+1], data[x+2]))
+
+                    address = ((data[x]&0xff)<<16) + ((data[x+1]&0xff)<<8) + (data[x+2]&0xff)
+                    syxParam = 0
+                    sampleToggle = 0
+                    wpOffs = 0x00 # reset Wave Parameter Offset
+
+                    # Wave Parameter
+                    if address >= 0x00010000 and address <= 0x00010048:
+                        syxParam = 1
+                        wpBlock = 0
+                        if verbose>0:
+                            print("Wave parameter of block-1.")
+                    if address >= 0x00010049 and address <= 0x00010111:
+                        syxParam = 1
+                        wpBlock = 1
+                        if verbose>0:
+                            print("Wave parameter of block-2.")
+                    if address >= 0x00010112 and address <= 0x0001015a:
+                        syxParam = 1
+                        wpBlock = 2
+                        if verbose>0:
+                            print("Wave parameter of block-3.")
+                    if address >= 0x0001015b and address <= 0x00010224:
+                        syxParam = 1
+                        wpBlock = 3
+                        if verbose>0:
+                            print("Wave parameter of block-4.")
+                    if data[x] == 0x01 and data[x+1] == 0x08:
+                        syxParam = 2
+                        if verbose>0:
+                            print("Performance parameter.")
+                        # TODO: Implement performance parameters?
+
+                    # Wave Data
+                    if data[x] >= 0x02 and data[x] <= 0x11:
+                        syxParam = 3
+                        samplePosition = ((data[x] - 0x02) << 14) + (data[x+1] << 7) + data[x+2]
+
+                    if data[x] >= 0x02 and data[x] <= 0x05:
+                        if verbose>1:
+                            print("Wave data of bank-1.")
+                    if data[x] >= 0x06 and data[x] <= 0x09:
+                        if verbose>1:
+                            print("Wave data of bank-2.")
+                    if data[x] >= 0x0a and data[x] <= 0x0d:
+                        if verbose>1:
+                            print("Wave data of bank-3.")
+                    if data[x] >= 0x0e and data[x] <= 0x11:
+                        if verbose>1:
+                            print("Wave data of bank-4.")
+
+                if syxCounter >= 7:
+
+                    # Wave Parameter
+                    if syxParam == 1:
+                        if syxCounter == 7+0x49: # When a second wave parameter block is in the same sysex chunk
+                            if data[x+1] == 0xf7: # if next symbol is system exclusive stop, this is a stray symbol
+                                if verbose>0:
+                                    print("Stray symbol (next is system exclusive stop). Ignoring.")
+                                syxActive = False
+                                continue
+                            wpOffs = 0x49
+
+                            if verbose>1:
+                                print("WPOffs is: {}".format(wpOffs))
+
+                        # Destination Bank
+                        if syxCounter == 7+wpOffs:
+                            wpBlock = data[x+0x0a] # Destination bank (we set this early / first as we rely on it instead of memory address)
+                            if verbose>0:
+                                print("Destination bank: {}".format(wpBlock+1))
+                            if wpBlock > Sample.SAMPLE_BANKS:
+                                if verbose>0:
+                                    print("WPBlock error. Ignoring.")
+                                syxActive = False
+                                continue
+
+                        # Tone Name
+                        if syxCounter >= 7+wpOffs and syxCounter <= 7+wpOffs+0x08:
+                            # We don't care about wpBlock, all banks should have the ToneNames should be the same
+                            if Utilities.isfilesafe(data[x]):
+                                sample.setToneNameChr(syxCounter-7-wpOffs, data[x])
+                            else:
+                                sample.setToneNameChr(syxCounter-7-wpOffs, " ")
+                            if syxCounter == 7+wpOffs+8:
+                                sample.ToneName = sample.ToneName.strip()
+                                if verbose>0:
+                                    print("Tone Name: '{}'".format(sample.ToneName))
+
+                        # Sampling Structure
+                        if syxCounter == 7+wpOffs+0x09 and data[x] < len(Sysex.SamplingStructures):
+                            sample.SamplingStructure = Sysex.SamplingStructures[data[x]] # Multiple bank sampling structures will overwrite
+
+                            if verbose:
+                                print("Sampling structure: {} - {}".format(sample.SamplingStructure.index, sample.SamplingStructure.name))
+
+                        # syxCounter == 7+wpOffs+0x0a # Destination Bank
+
+                        # Sampling Rate
+                        if syxCounter == 7+wpOffs+0x0b:
+                            if data[x] & 0x01:
+                                sample.Banks[wpBlock].SampleRate = SampleBank.SAMPLE_RATE_30K
+                                if verbose>0:
+                                    print("Smapling rate: 15 kHz")
+                            else:
+                                if verbose>0:
+                                    print("Sampling rate: 30 kHz")
+
+                        # Loop Mode & Scan Mode
+                        if syxCounter == 7+wpOffs+0x0c:
+                            if (data[x] & 0x0c) == 0x00:
+                                if verbose>0:
+                                    print("Loop mode: 1 shot")
+                            if (data[x] & 0x0c) == 0x04:
+                                sample.Banks[wpBlock].LoopMode = 1
+                                if verbose>0:
+                                    print("Loop mode: Manual")
+                            if (data[x] & 0x0c) == 0x08:
+                                sample.Banks[wpBlock].LoopMode = 2
+                                if verbose>0:
+                                    print("Loop mode: Auto")
+
+                            if (data[x] & 0x03) == 0x00:
+                                if verbose>0:
+                                    print("Scan mode: Forward")
+                            if (data[x] & 0x03) == 0x01:
+                                sample.Banks[wpBlock].ScanMode = 1
+                                if verbose>0:
+                                    print("Scan mode: Alternate")
+                            if (data[x] & 0x03) == 0x02:
+                                sample.Banks[wpBlock].ScanMode = 2
+                                if verbose>0:
+                                    print("Scan mode: Backward")
+
+                        # Rec key number
+                        if syxCounter == 7+wpOffs+0x0d:
+                            sample.Banks[wpBlock].RecKey = (data[x] & 0x0f) + ((data[x+1] & 0x0f) << 4)
+                            if verbose>0:
+                                print("Rec key number: {}".format(sample.Banks[wpBlock].RecKey))
+
+                        # Start address, Manual and auto loop length and end address
+                        if syxCounter == 7+wpOffs+0x11:
+                            # (StartAddress-65536) / 32768 seems to be the same as destination bank
+                            sample.Banks[wpBlock].StartAddress = (
+                                ((data[x] & 0x0f) << 8)
+                                + ((data[x+1] & 0x0f) << 12)
+                                + ((data[x+2] & 0x0f))
+                                + ((data[x+3] & 0x0f) << 4)
+                                + ((data[x+21] & 0x0c) << 14)
+                            )
+                            if sample.Banks[wpBlock].StartAddress > 65535:
+                                sample.Banks[wpBlock].StartAddress -= 65536
+
+                            sample.Banks[wpBlock].ManualLoopLength = (
+                                ((data[x+4] & 0x0f) << 8) +
+                                ((data[x+5] & 0x0f) << 12) +
+                                ((data[x+6] & 0x0f)) +
+                                ((data[x+7] & 0x0f) << 4) +
+                                ((data[x+20] & 0x0c) << 14)
+                            )
+                            sample.Banks[wpBlock].ManualLoopLength -= 1
+
+                            sample.Banks[wpBlock].ManualEndAddress = (
+                                ((data[x+8] & 0x0f) << 8) +
+                                ((data[x+9] & 0x0f) << 12) +
+                                ((data[x+10] & 0x0f)) +
+                                ((data[x+11] & 0x0f) << 4) +
+                                ((data[x+20] & 0x03) << 16)
+                            )
+                            if sample.Banks[wpBlock].ManualEndAddress > 65535:
+                                sample.Banks[wpBlock].ManualEndAddress -= 65536
+                            sample.Banks[wpBlock].ManualEndAddress -= sample.Banks[wpBlock].StartAddress
+
+                            sample.Banks[wpBlock].AutoLoopLength = (
+    							((data[x+12] & 0x0f) << 8) +
+    							((data[x+13] & 0x0f) << 12) +
+    							((data[x+14] & 0x0f)) +
+    							((data[x+15] & 0x0f) << 4) +
+    							((data[x+23] & 0x0c) << 14)
+                            )
+                            sample.Banks[wpBlock].AutoLoopLength -= 1
+
+                            sample.Banks[wpBlock].AutoEndAddress = (
+                                ((data[x+16] & 0x0f) << 8) +
+                                ((data[x+17] & 0x0f) << 12) +
+                                ((data[x+18] & 0x0f)) +
+                                ((data[x+19] & 0x0f) << 4) +
+                                ((data[x+23] & 0x03) << 16)
+                            )
+                            if sample.Banks[wpBlock].AutoEndAddress > 65535:
+                                sample.Banks[wpBlock].AutoEndAddress -= 65536
+                            sample.Banks[wpBlock].AutoEndAddress -= sample.Banks[wpBlock].StartAddress
+
+                            if verbose>0:
+                                print("Start Address: {}".format(sample.Banks[wpBlock].StartAddress))
+                                print("Manual Loop Length: {}".format(sample.Banks[wpBlock].ManualLoopLength))
+                                print("Manual End Address (minus Start Address): {}".format(sample.Banks[wpBlock].ManualEndAddress))
+                                print("Auto Loop Length: {}".format(sample.Banks[wpBlock].AutoLoopLength))
+                                print("Auto End Address (minus Start Address): {}".format(sample.Banks[wpBlock].AutoEndAddress))
+
+                    # Wave Data
+                    if syxParam == 3:
+                        if sampleToggle % 2 != 0:
+                            # Make sure we never write outside S-10 memory
+                            if samplePosition+1 > Sample.S10_MEMORY_MAX:
+                                if verbose>0:
+                                    print("SamplePosition outside S-10 memory boundary.")
+                                    break
+
+                            sampleData = ((data[x-1] & 0x7f) << 7) + (data[x] & 0x7c) # 12-bit
+                            #sampleData = ((data[x-1] & 0x7f) << 9) + ((data[x] & 0x7c) << 2) # 16-bit
+                            sample.Memory[samplePosition] = 0xff & sampleData
+                            sample.Memory[samplePosition+1] = 0xff & (sampleData >> 8)
+
+                            samplePosition += 2
+
+                        sampleToggle += 1
+
+                syxCounter += 1
+
+        if verbose>0:
+            print("Final SamplePosition: {}".format(samplePosition))
+
+        return sample
+
 # Command Line
 
 parser = argparse.ArgumentParser(description="MFM Encoder/Decoder")
@@ -485,7 +894,7 @@ parser.add_argument('--verbose', '-v', type=int)
 parser.add_argument('--input', '-i', type=argparse.FileType('rb'))
 parser.add_argument('--output', '-o', type=argparse.FileType('wb', 0))
 parser.add_argument('--hex', '-s', type=str)
-parser.add_argument('--mode', '-m', type=str, choices=['encode', 'decode', 'mfm-decode', 'mfm-encode', 'mfm-sync', 'lut-invert', 'qd-generate', 'crc-check'], required=True, nargs="+", help="multiple processes can be combined and processed in order")
+parser.add_argument('--mode', '-m', type=str, choices=['encode', 'decode', 'mfm-decode', 'mfm-encode', 'mfm-sync', 'lut-invert', 'qd-generate', 'crc-check', 'syx-read'], required=True, nargs="+", help="multiple processes can be combined and processed in order")
 parser.add_argument('--block', '-b', type=int, default=1)
 parser.set_defaults(verbose=0, hex='', type='encode')
 
