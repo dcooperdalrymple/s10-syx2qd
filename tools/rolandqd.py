@@ -70,10 +70,10 @@ class Utilities:
             return "bin"
         elif mode == "lut-invert":
             return "inv"
-        elif mode == "qd-generate" or "qd-write":
+        elif mode == "qd-generate" or mode == "qd-write":
             return "qd"
-        else:
-            return "bin"
+
+        return False
 
     def getbit(data, bit_offset):
         return (input[bit_offset>>3] >> (0x07-(bit_offset&0x07))) & 0x01
@@ -491,6 +491,8 @@ parser.set_defaults(verbose=0, hex='', type='encode')
 
 args = parser.parse_args()
 
+# Mode Combos
+
 if (type(args.mode) is str and args.mode == "encode") or (type(args.mode) is list and args.mode[0] == "encode"):
     args.mode = ["lut-invert", "mfm-encode", "lut-invert"]
 elif (type(args.mode) is str and args.mode == "decode") or (type(args.mode) is list and args.mode[0] == "decode"):
@@ -511,7 +513,7 @@ elif args.input:
     dirname = path.dirname(args.input.name)
     filename = path.splitext(path.basename(args.input.name))[0]
 
-    if not args.output:
+    if not args.output and Utilities.getext(args.mode) != False:
         args.output = open("{}{}.{}".format(dirname, filename, Utilities.getext(args.mode)), "wb")
 
     # Read input into list of numbers
@@ -527,9 +529,10 @@ elif args.input:
     # Process data
     output = Utilities.process(input, args.mode, args.verbose, args)
 
-    # Write output to file
-    args.output.write(bytearray(output))
-    args.output.close()
+    if args.output:
+        # Write output to file
+        args.output.write(bytearray(output))
+        args.output.close()
 
 elif args.mode == "qd-generate" or (type(args.mode) is list and args.mode[0] == "qd-generate"):
 
