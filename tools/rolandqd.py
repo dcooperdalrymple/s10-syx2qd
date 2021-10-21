@@ -583,8 +583,7 @@ class QD:
         data[0x00] = 0x05 #?
         data[0x01] = 0xa0 #?
         data[0x02] = 0xc0 #?
-        data[0x03] =
-        ((bank&0x0f)<<4) | (sample.SamplingStructure.index&0x0f)
+        data[0x03] = ((bank&0x0f)<<4) | (sample.SamplingStructure.index&0x0f)
         if sample.Banks[bank].SampleRate == SampleBank.SAMPLE_RATE_15K:
             data[0x04] = 0x4f
         else:
@@ -668,7 +667,7 @@ class SampleBank:
         self.ManualEndAddress = 0
         self.AutoLoopLength = 0
         self.AutoEndAddress = 0
-        self.SampleRate = self.DEFAULT_SAMPLE_RATE
+        self.SampleRate = SampleBank.DEFAULT_SAMPLE_RATE
 
 class Sample:
 
@@ -680,7 +679,7 @@ class Sample:
     def __init__(self):
         self.SamplingStructure = SamplingStructure()
         self.ToneName = " " * self.TONE_NAME_LENGTH
-        self.Banks = [SampleBank for i in range(self.SAMPLE_BANKS)]
+        self.Banks = [SampleBank() for i in range(self.SAMPLE_BANKS)]
         self.Memory = [0 for i in range(self.S10_MEMORY_MAX)]
         # TODO: Dynamically set Banks with def setSamplingStructure? class SampleBank would have self.Sample for "A", etc
 
@@ -919,6 +918,7 @@ class Sysex:
                                 if verbose>0:
                                     print("Sampling rate: 15 kHz")
                             else:
+                                sample.Banks[wpBlock].SampleRate = SampleBank.SAMPLE_RATE_30K
                                 if verbose>0:
                                     print("Sampling rate: 30 kHz")
 
