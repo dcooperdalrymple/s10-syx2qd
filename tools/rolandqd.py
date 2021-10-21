@@ -981,8 +981,7 @@ class Sysex:
                                     print("SamplePosition outside S-10 memory boundary.")
                                     break
 
-                            sampleData = ((data[x-1] & 0x7f) << 7) + (data[x] & 0x7c) # 12-bit
-                            #sampleData = ((data[x-1] & 0x7f) << 9) + ((data[x] & 0x7c) << 2) # 16-bit
+                            sampleData = ((data[x-1] & 0x7f) << 9) + ((data[x] & 0x7c) << 2)
                             sample.Memory[samplePosition] = 0xff & sampleData
                             sample.Memory[samplePosition+1] = 0xff & (sampleData >> 8)
 
@@ -993,7 +992,7 @@ class Sysex:
                 syxCounter += 1
 
         if verbose>0:
-            print("Final SamplePosition: {}".format(samplePosition))
+            print("Final SamplePosition: {}\n".format(samplePosition))
 
         return sample
 
