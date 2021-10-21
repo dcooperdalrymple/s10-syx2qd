@@ -580,7 +580,42 @@ class QD:
     def buildWaveBlock(sample, bank):
         data = [0 for i in range(QD.WAVE_BLOCK_SIZE)]
 
-        # TODO: Insert Wave Bank Parameters...
+        data[0x00] = 0x05 #?
+        data[0x01] = 0xa0 #?
+        data[0x02] = 0xc0 #?
+        data[0x03] =
+        ((bank&0x0f)<<4) | (sample.SamplingStructure.index&0x0f)
+        if sample.Banks[bank].SampleRate == SampleBank.SAMPLE_RATE_15K:
+            data[0x04] = 0x4f
+        else:
+            data[0x04] = 0x4e # 1st bit = sample rate
+        data[0x05] = sample.Banks[bank].RecKey & 0xff
+
+        # TODO: This needs testing
+        data[0x06] = ((sample.Banks[bank].LoopMode<<4)&0x0f) | (sample.Banks[bank].ScanMode&0x0f)
+
+        # Start Address
+        data[0x07] = (sample.Banks[bank].ManualLoopLength>>8)&0xff
+        data[0x08] = sample.Banks[bank].ManualLoopLength&0xff
+
+        # Manual Loop Length
+        data[0x09] = ((sample.Banks[bank].ManualLoopLength+1)>>8)&0xff
+        data[0x0a] = (sample.Banks[bank].ManualLoopLength+1)&0xff
+
+        # Manual End Address
+        data[0x0b] = (sample.Banks[bank].ManualEndAddress>>8)&0xff
+        data[0x0c] = sample.Banks[bank].ManualEndAddress&0xff
+
+        # Auto Loop Length
+        data[0x0d] = ((sample.Banks[bank].AutoLoopLength+1)>>8)&0xff
+        data[0x0e] = (sample.Banks[bank].AutoLoopLength+1)&0xff
+
+        # Auto End Address
+        data[0x0f] = (sample.Banks[bank].AutoEndAddress>>8)&0xff
+        data[0x10] = sample.Banks[bank].AutoEndAddress&0xff
+
+        data[0x11] = 0x41 #?
+        data[0x12] = 0x01 #?
 
         startAddress = Sample.S10_MEMORY_BANK_SIZE * bank
 
