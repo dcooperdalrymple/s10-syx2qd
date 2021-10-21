@@ -15,6 +15,7 @@ try:
     from os import path
     import struct
     import string
+    import wave
 except ImportError as err:
     print("Could not load {} module.".format(err))
     raise SystemExit
@@ -62,6 +63,8 @@ class Utilities:
                 data = Sysex.read(data, verbose) # class Sample
             elif mode[i] == "qd-sample-blocks" and isinstance(data, Sample):
                 data = QD.buildSampleBankBlocks(data, verbose)
+            elif mode[i] == "wav-write":
+                data = Wav.write(data, verbose)
 
         return data
 
@@ -998,9 +1001,42 @@ class Sysex:
 
 class Wav:
 
-    def processSample():
-        # TODO: Convert sample to wave sound file
-        pass
+    NUM_CHANNELS = 1
+    SAMPLE_WIDTH = 2 # bytes
+    SAMPLE_RATE = SampleBank.DEFAULT_SAMPLE_RATE
+
+    def write(data, verbose=0):
+        filename = "sample"
+        if isinstance(data, Sample):
+            if verbose>0:
+                print("Processing sample data for wav-write.")
+            filename = data.ToneName
+            data = Wav.processSample(data)
+
+        filepath = "{}.{}".format(filename, "wav")
+        if verbose>0:
+            print("Writing wav data to {}.".format(filepath))
+        wav = wave.open(filepath, "wb")
+
+        frames = int(len(data)/Wav.SAMPLE_WIDTH)
+        if verbose>1:
+            print("Wav parameters: channels = {}, sample width = {}, sample rate = {}, frames = {}".format(Wav.NUM_CHANNELS, Wav.SAMPLE_WIDTH, Wav.SAMPLE_RATE, frames))
+        wav.setnchannels(Wav.NUM_CHANNELS)
+        wav.setsampwidth(Wav.SAMPLE_WIDTH)
+        wav.setframerate(Wav.SAMPLE_RATE)
+        wav.setnframes(frames)
+
+        wav.writeframes(bytearray(data))
+
+        wav.close()
+        if verbose>0:
+            print("Finished writing wav data.\n")
+
+        return data
+
+    def processSample(sample, verbose=0):
+        # TODO: Convert sample to array of wave data
+        return sample.Memory
 
 # Command Line
 
@@ -1009,7 +1045,7 @@ parser.add_argument('--verbose', '-v', type=int)
 parser.add_argument('--input', '-i', type=argparse.FileType('rb'))
 parser.add_argument('--output', '-o', type=argparse.FileType('wb', 0))
 parser.add_argument('--hex', '-s', type=str)
-parser.add_argument('--mode', '-m', type=str, choices=['encode', 'decode', 'mfm-decode', 'mfm-encode', 'mfm-sync', 'lut-invert', 'qd-generate', 'crc-check', 'syx-read', 'syx-to-qd'], required=True, nargs="+", help="multiple processes can be combined and processed in order")
+parser.add_argument('--mode', '-m', type=str, choices=['encode', 'decode', 'mfm-decode', 'mfm-encode', 'mfm-sync', 'lut-invert', 'qd-generate', 'crc-check', 'syx-read', 'syx-to-qd', 'wav-write', 'syx-to-wav', 'qd-to-wav'], required=True, nargs="+", help="multiple processes can be combined and processed in order")
 parser.add_argument('--block', '-b', type=int, default=1)
 parser.set_defaults(verbose=0, hex='', type='encode')
 
@@ -1023,6 +1059,10 @@ elif (type(args.mode) is str and args.mode == "decode") or (type(args.mode) is l
     args.mode = ["lut-invert", "mfm-sync", "mfm-decode", "lut-invert"]
 elif (type(args.mode) is str and args.mode == "syx-to-qd") or (type(args.mode) is list and args.mode[0] == "syx-to-qd"):
     args.mode = ['syx-read', 'qd-sample-blocks']
+elif (type(args.mode) is str and args.mode == "syx-to-wav") or (type(args.mode) is list and args.mode[0] == "syx-to-wav"):
+    args.mode = ["syx-read", 'wav-write']
+elif (type(args.mode) is str and args.mode == "qd-to-wav") or (type(args.mode) is list and args.mode[0] == "qd-to-wav"):
+    args.mode = [] # qd wav extracting not implemented yet
 
 if args.hex != "":
 
