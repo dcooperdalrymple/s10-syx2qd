@@ -589,8 +589,12 @@ class QD:
             blockAddress = QD.WAVE_OFFSET + i*3
             memoryAddress = startAddress + i*2
 
-            val1 = ((sample.Memory[memoryAddress+1]&0x0f)<<8) + (sample.Memory[memoryAddress+0]&0xff)
-            val2 = ((sample.Memory[memoryAddress+3]&0x0f)<<8) + (sample.Memory[memoryAddress+2]&0xff)
+            val1 = ((sample.Memory[memoryAddress+1]&0xff)<<8) + (sample.Memory[memoryAddress+0]&0xff)
+            val2 = ((sample.Memory[memoryAddress+3]&0xff)<<8) + (sample.Memory[memoryAddress+2]&0xff)
+
+            # Convert to 12-bit
+            val1 = (val1>>4)&0x0fff
+            val2 = (val2>>4)&0x0fff
 
             data[blockAddress+0] = (val1>>4) & 0xff
             data[blockAddress+2] = val1 & 0x0f # or +3??
