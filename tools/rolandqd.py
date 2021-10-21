@@ -60,6 +60,8 @@ class Utilities:
                 data = CRC.check(data, verbose) # CRC value (uint16_t)
             elif mode[i] == "syx-read":
                 data = Sysex.read(data, verbose) # class Sample
+            elif mode[i] == "qd-sample-blocks" and isinstance(data, Sample):
+                data = QD.buildSampleBankBlocks(data, verbose)
 
         return data
 
@@ -107,14 +109,6 @@ class MFM:
     mfmsyncword = [
         0x94, 0x4A, 0x94, 0x4A, 0x94, 0x4A, 0x94, 0x4A,
         0x94, 0x4A, 0x94, 0x4A, 0x94, 0x4A, 0x44, 0x91
-    ]
-
-    binsyncword = [
-        0x16, 0x16, 0x16, 0x16, 0x16, 0x16, 0x16, 0xa5
-    ]
-
-    binsyncend = [
-        16, 16, 16, 16, 16, 16, 16
     ]
 
     def mfmtobin(input):
@@ -322,8 +316,11 @@ class CRC16:
         self.high = (value >> 8) & 0xff
         self.low = value & 0xff
 
-    def get(self):
-        return ((self.high & 0xff) << 8) | (self.low & 0xff)
+    def get(self, invert=False):
+        if not invert:
+            return ((self.high & 0xff) << 8) | (self.low & 0xff)
+        else:
+            return (LUT.invert(self.high & 0xff) << 8) | LUT.invert(self.low & 0xff)
 
     def print(self, invert=False):
         if not invert:
@@ -366,7 +363,7 @@ class CRC:
             else:
                 print("CRC Check Successful!")
 
-        return crc.get() # >0 = bad crc
+        return crc.get(True) # >0 = bad crc
 
     def calculate(polynome, initvalue, verbose=0):
         count = 1<<CRC.BITS
@@ -428,6 +425,10 @@ class QD:
     BLOCKS = False
 
     HEADER = "DCDQDS10"
+
+    SYNCPRE = [0x16, 0x16, 0x16, 0x16, 0x16, 0x16, 0x16] #, 0xa5]
+    SYNC = [0xa5]
+    SYNCPOST = [0x16, 0x16, 0x16, 0x16, 0x16, 0x16, 0x16]
 
     def mstobytes(ms):
         return int(ms / QD.BIT_MS / 8)
@@ -494,9 +495,113 @@ class QD:
 
         return qd
 
-    def buildSampleBankBlocks(sample):
-        print()
-        # TODO: Convert sample banks to QD blocks. Use 2-dimensional array as [bank=[blocks]]?
+    def buildSampleBankBlocks(sample, verbose=0):
+        banks = []
+
+        for i in range(sample.SamplingStructure.offset, sample.SamplingStructure.offset + sample.SamplingStructure.length * sample.SamplingStructure.loops):
+            blocks = []
+
+            blocks.append(QD.buildFormatBlock())
+            if verbose>2:
+                print("Bank {} - Block {}:".format(i+1, 1))
+                Utilities.printhex(blocks[0])
+
+            blocks.append(QD.buildParamBlock(sample, i))
+            if verbose>2:
+                print("Bank {} - Block {}:".format(i+1, 2))
+                Utilities.printhex(blocks[1])
+
+            blocks.append(QD.buildWaveBlock(sample, i))
+            if verbose>2:
+                print("Bank {} - Block {}:".format(i+1, 3))
+                Utilities.printhex(blocks[2])
+
+            banks.append(blocks)
+
+            break # for testing
+
+        # Export bank blocks as binary files
+        if verbose>1:
+            print("Writing binary files for each bank block.")
+            for i in range(len(banks)):
+                for j in range(len(banks[i])):
+                    filename = "bank-{}_block-{}.{}".format(i+1, j+1, "bin")
+                    print("Writing {}.".format(filename))
+                    file = open(filename, "wb")
+                    file.write(bytearray(banks[i][j]))
+                    file.close()
+
+
+        return banks
+
+    FORMAT_BLOCK_WORD = [0x02] # 0x02=?
+    def buildFormatBlock():
+        return QD.prepareBlock(QD.FORMAT_BLOCK_WORD)
+
+    PARAM_BLOCK_SIZE = 0x46-3 # -3 = 1 for sync and 2 for crc
+    TONE_NAME_OFFSET = 0x04
+    ID_OFFSET = 0x1d
+    ID_LENGTH = 10
+    ID_WORD = "Roland S10" # no carriage return
+    def buildParamBlock(sample, bank):
+        data = [0 for i in range(QD.PARAM_BLOCK_SIZE)]
+
+        data[1] = 0x40 # ?
+
+        data[3] = 0x01 # ?
+
+        # Tone Name
+        for i in range(QD.TONE_NAME_OFFSET, QD.TONE_NAME_OFFSET+Sample.TONE_NAME_LENGTH):
+            if i-QD.TONE_NAME_OFFSET < len(sample.ToneName):
+                data[i] = ord(sample.ToneName[i-QD.TONE_NAME_OFFSET])
+            else:
+                data[i] = ord(" ")
+        data[QD.TONE_NAME_OFFSET+Sample.TONE_NAME_LENGTH] = 0x0d # carriage return
+
+        # 7 spaces?
+        for i in range(QD.TONE_NAME_OFFSET+Sample.TONE_NAME_LENGTH+1, QD.TONE_NAME_OFFSET+Sample.TONE_NAME_LENGTH+1+7):
+            data[i] = ord(" ")
+
+        data[0x17] = 0xa0 # ?
+        data[0x18] = 0xc0 # ?
+
+        # ID
+        for i in range(QD.ID_OFFSET, QD.ID_OFFSET+QD.ID_LENGTH):
+            data[i] = ord(QD.ID_WORD[i-QD.ID_OFFSET])
+
+        return QD.prepareBlock(data)
+
+    WAVE_BLOCK_SIZE = 0xC0A6-3 # -3 = 1 for sync and 2 for crc
+    WAVE_OFFSET = 0xef-8 # -8 is sync
+    WAVE_DATA_SIZE = 32722 # 0x7FD2
+    def buildWaveBlock(sample, bank):
+        data = [0 for i in range(QD.WAVE_BLOCK_SIZE)]
+
+        # TODO: Insert Wave Bank Parameters...
+
+        startAddress = Sample.S10_MEMORY_BANK_SIZE * bank
+
+        # Squeeze 2x12-bit into 3x8-bit
+        for i in range(int(QD.WAVE_DATA_SIZE/2)):
+            blockAddress = QD.WAVE_OFFSET + i*3
+            memoryAddress = startAddress + i*2
+
+            val1 = ((sample.Memory[memoryAddress+1]&0x0f)<<8) + (sample.Memory[memoryAddress+0]&0xff)
+            val2 = ((sample.Memory[memoryAddress+3]&0x0f)<<8) + (sample.Memory[memoryAddress+2]&0xff)
+
+            data[blockAddress+0] = (val1>>4) & 0xff
+            data[blockAddress+2] = val1 & 0x0f # or +3??
+            data[blockAddress+1] = (val2>>4) & 0xff
+            data[blockAddress+2] = data[blockAddress+2] | ((val2&0x0f) << 4) # or +3??
+
+        return QD.prepareBlock(data)
+
+    def prepareBlock(data):
+        data = QD.SYNC + data
+        crc_word = CRC.check(data)
+        data = data + [(crc_word>>8)&0xff, crc_word&0xff]
+        data = QD.SYNCPRE + data + QD.SYNCPOST
+        return data
 
 class SamplingStructure:
     def __init__(self, index=0, name="A", offset=0, length=1, loops=1):
@@ -525,9 +630,10 @@ class SampleBank:
 
 class Sample:
 
-    S10_MEMORY_MAX = 256*1024
+    S10_MEMORY_MAX = 256*1024 # 0x040000
+    S10_MEMORY_BANK_SIZE = 0x010000
     SAMPLE_BANKS = 4
-    TONE_NAME_LENGTH = 10
+    TONE_NAME_LENGTH = 9
 
     def __init__(self):
         self.SamplingStructure = SamplingStructure()
@@ -698,7 +804,11 @@ class Sysex:
                     # Wave Data
                     if data[x] >= 0x02 and data[x] <= 0x11:
                         syxParam = 3
+                        if verbose>1:
+                            print("Previous SamplePosition set as 0x{:02x}".format(samplePosition))
                         samplePosition = ((data[x] - 0x02) << 14) + (data[x+1] << 7) + data[x+2]
+                        if verbose>1:
+                            print("SamplePosition set as 0x{:02x}".format(samplePosition))
 
                     if data[x] >= 0x02 and data[x] <= 0x05:
                         if verbose>1:
@@ -887,6 +997,12 @@ class Sysex:
 
         return sample
 
+class Wav:
+
+    def processSample():
+        # TODO: Convert sample to wave sound file
+        pass
+
 # Command Line
 
 parser = argparse.ArgumentParser(description="MFM Encoder/Decoder")
@@ -894,7 +1010,7 @@ parser.add_argument('--verbose', '-v', type=int)
 parser.add_argument('--input', '-i', type=argparse.FileType('rb'))
 parser.add_argument('--output', '-o', type=argparse.FileType('wb', 0))
 parser.add_argument('--hex', '-s', type=str)
-parser.add_argument('--mode', '-m', type=str, choices=['encode', 'decode', 'mfm-decode', 'mfm-encode', 'mfm-sync', 'lut-invert', 'qd-generate', 'crc-check', 'syx-read'], required=True, nargs="+", help="multiple processes can be combined and processed in order")
+parser.add_argument('--mode', '-m', type=str, choices=['encode', 'decode', 'mfm-decode', 'mfm-encode', 'mfm-sync', 'lut-invert', 'qd-generate', 'crc-check', 'syx-read', 'syx-to-qd'], required=True, nargs="+", help="multiple processes can be combined and processed in order")
 parser.add_argument('--block', '-b', type=int, default=1)
 parser.set_defaults(verbose=0, hex='', type='encode')
 
@@ -906,6 +1022,8 @@ if (type(args.mode) is str and args.mode == "encode") or (type(args.mode) is lis
     args.mode = ["lut-invert", "mfm-encode", "lut-invert"]
 elif (type(args.mode) is str and args.mode == "decode") or (type(args.mode) is list and args.mode[0] == "decode"):
     args.mode = ["lut-invert", "mfm-sync", "mfm-decode", "lut-invert"]
+elif (type(args.mode) is str and args.mode == "syx-to-qd") or (type(args.mode) is list and args.mode[0] == "syx-to-qd"):
+    args.mode = ['syx-read', 'qd-sample-blocks']
 
 if args.hex != "":
 
