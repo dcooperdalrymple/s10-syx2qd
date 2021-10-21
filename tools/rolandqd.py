@@ -880,9 +880,9 @@ class Sysex:
                         # Sampling Rate
                         if syxCounter == 7+wpOffs+0x0b:
                             if data[x] & 0x01:
-                                sample.Banks[wpBlock].SampleRate = SampleBank.SAMPLE_RATE_30K
+                                sample.Banks[wpBlock].SampleRate = SampleBank.SAMPLE_RATE_15K
                                 if verbose>0:
-                                    print("Smapling rate: 15 kHz")
+                                    print("Sampling rate: 15 kHz")
                             else:
                                 if verbose>0:
                                     print("Sampling rate: 30 kHz")
